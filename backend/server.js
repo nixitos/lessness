@@ -1,27 +1,64 @@
 const ws = require('ws');
-const srv = new ws.Server({ port: process.env.PORT || 8080 });
+const express = require('express');
+const http = require('http');
+
+const app = express();
+const PORT = process.env.PORT || 10000;
+
+app.get('/ping', (req, res) => {
+  res.status(200).send('pong');
+});
+
+app.get('/', (req, res) => {
+  res.status(200).send('lessness backend running');
+});
+
+const server = http.createServer(app);
+const wss = new ws.Server({ server });
 
 let groups = new Map();
 
-srv.on('connection', (c) => {
+// ping-self механизм
+function startSelfPing() {
+  const url = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
+  console.log(`self-ping target: ${url}`);
+  
+  setInterval(() => {
+    fetch(`${url}/ping`)
+      .then(res => console.log(`[${new Date().toISOString()}] self-ping: ${res.status}`))
+      .catch(err => console.log(`[${new Date().toISOString()}] ping failed: ${err.message}`));
+  }, 120000);
+}
+
+wss.on('connection', (c) => {
   let curGroup = null;
   
   c.on('message', (raw) => {
-    let msg = JSON.parse(raw);
-    
-    if (msg.t === 'join') {
-      let gid = msg.gid;
-      if (!groups.has(gid)) groups.set(gid, []);
-      let grp = groups.get(gid);
-      if (!grp.includes(c)) grp.push(c);
-      curGroup = gid;
-      c.send(JSON.stringify({ t: 'joined', gid }));
-      let peers = grp.filter(p => p !== c).map(p => ({ id: p._socket.remoteAddress || 'peer' }));
-      c.send(JSON.stringify({ t: 'peers', list: peers }));
-    }
-    else if (msg.t === 'offer' || msg.t === 'answer' || msg.t === 'ice') {
-      let target = groups.get(curGroup)?.find(p => p !== c);
-      if (target) target.send(JSON.stringify({ t: msg.t, from: c._socket.remoteAddress, data: msg.data }));
+    try {
+      let msg = JSON.parse(raw);
+      
+      if (msg.t === 'join') {
+        let gid = msg.gid;
+        if (!groups.has(gid)) groups.set(gid, []);
+        let grp = groups.get(gid);
+        if (!grp.includes(c)) grp.push(c);
+        curGroup = gid;
+        c.send(JSON.stringify({ t: 'joined', gid }));
+        let peers = grp.filter(p => p !== c).map(p => ({ id: p._socket?.remoteAddress || 'peer' }));
+        c.send(JSON.stringify({ t: 'peers', list: peers }));
+      }
+      else if (msg.t === 'offer' || msg.t === 'answer' || msg.t === 'ice') {
+        let grp = groups.get(curGroup);
+        if (grp) {
+          for (let client of grp) {
+            if (client !== c) {
+              client.send(JSON.stringify({ t: msg.t, from: c._socket?.remoteAddress, data: msg.data }));
+            }
+          }
+        }
+      }
+    } catch(e) {
+      console.log('parse error:', e);
     }
   });
   
@@ -33,4 +70,9 @@ srv.on('connection', (c) => {
       if (grp.length === 0) groups.delete(curGroup);
     }
   });
+});
+
+server.listen(PORT, () => {
+  console.log(`server running on port ${PORT}`);
+  startSelfPing();
 });
