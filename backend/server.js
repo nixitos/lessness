@@ -36,6 +36,15 @@ function startSelfPing() {
   }, 120000);
 }
 
+function broadcastToGroup(group, senderId, packet, excludeSender = true) {
+  for (let [uid, client] of group) {
+    if (excludeSender && uid === senderId) continue;
+    if (client.ws.readyState === 1) {
+      client.ws.send(JSON.stringify(packet));
+    }
+  }
+}
+
 wss.on('connection', (c) => {
   let curGroup = null;
   let userId = (++userIdCounter).toString();
@@ -62,16 +71,11 @@ wss.on('connection', (c) => {
             text: `${userNick} присоединился к чату`,
             time: Date.now()
           };
-          
-          for (let [uid, client] of grp) {
-            if (uid !== userId && client.ws.readyState === 1) {
-              client.ws.send(JSON.stringify(joinMsg));
-            }
-          }
+          broadcastToGroup(grp, userId, joinMsg, true);
         }
         
         curGroup = gid;
-        c.send(JSON.stringify({ t: 'joined', gid, userId }));
+        c.send(JSON.stringify({ t: 'joined', gid, userId, nick: userNick }));
         
         let peers = [];
         for (let [uid, client] of grp) {
@@ -80,6 +84,13 @@ wss.on('connection', (c) => {
           }
         }
         c.send(JSON.stringify({ t: 'peers', list: peers }));
+        
+        let newUserPacket = {
+          t: 'peer_joined',
+          id: userId,
+          nick: userNick
+        };
+        broadcastToGroup(grp, userId, newUserPacket, true);
       }
       else if (msg.t === 'msg') {
         let grp = groups.get(curGroup);
@@ -90,11 +101,7 @@ wss.on('connection', (c) => {
             text: msg.text,
             time: Date.now()
           };
-          for (let [uid, client] of grp) {
-            if (client.ws.readyState === 1) {
-              client.ws.send(JSON.stringify(packet));
-            }
-          }
+          broadcastToGroup(grp, userId, packet, false);
         }
       }
       else if (msg.t === 'nick') {
@@ -109,28 +116,14 @@ wss.on('connection', (c) => {
             text: `${oldNick} сменил ник на ${userNick}`,
             time: Date.now()
           };
+          broadcastToGroup(grp, userId, nickMsg, true);
           
-          for (let [uid, client] of grp) {
-            if (client.ws.readyState === 1) {
-              client.ws.send(JSON.stringify(nickMsg));
-            }
-          }
-        }
-      }
-      else if (msg.t === 'offer' || msg.t === 'answer' || msg.t === 'ice') {
-        let grp = groups.get(curGroup);
-        if (grp) {
-          let targetId = msg.targetId;
-          if (targetId && grp.has(targetId)) {
-            let target = grp.get(targetId);
-            if (target.ws.readyState === 1) {
-              target.ws.send(JSON.stringify({
-                t: msg.t,
-                from: userId,
-                data: msg.data
-              }));
-            }
-          }
+          let nickUpdatePacket = {
+            t: 'peer_nick',
+            id: userId,
+            nick: userNick
+          };
+          broadcastToGroup(grp, userId, nickUpdatePacket, true);
         }
       }
     } catch(e) {
@@ -150,12 +143,13 @@ wss.on('connection', (c) => {
           text: `${leaveNick} покинул чат`,
           time: Date.now()
         };
+        broadcastToGroup(grp, userId, leaveMsg, true);
         
-        for (let [uid, client] of grp) {
-          if (client.ws.readyState === 1) {
-            client.ws.send(JSON.stringify(leaveMsg));
-          }
-        }
+        let leavePacket = {
+          t: 'peer_left',
+          id: userId
+        };
+        broadcastToGroup(grp, userId, leavePacket, true);
         
         if (grp.size === 0) {
           groups.delete(curGroup);
