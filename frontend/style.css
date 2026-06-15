@@ -535,3 +535,49 @@ button:hover {
   width: 14px;
   height: 14px;
 }
+
+.message.system {
+  background: rgba(124, 58, 237, 0.15);
+  border: 1px dashed rgba(168, 85, 247, 0.4);
+  text-align: center;
+  max-width: 90%;
+  margin: 8px auto;
+  font-size: 0.8rem;
+  color: #a855f7;
+}
+
+.message.system i {
+  font-style: normal;
+  opacity: 0.8;
+}
+
+.message.self {
+  align-self: flex-end;
+  background: linear-gradient(135deg, #7c3aed, #a855f7);
+  border: none;
+}
+
+.message.self b {
+  color: #e9d5ff;
+}
+
+.message b {
+  color: #c084fc;
+  font-size: 0.85rem;
+}
+
+.message.system {
+  background: rgba(168, 85, 247, 0.08);
+  border: none;
+  text-align: center;
+  max-width: 90%;
+  margin: 6px auto;
+  font-size: 0.75rem;
+  color: #a855f7;
+  backdrop-filter: blur(4px);
+}
+
+.message.system i {
+  font-style: normal;
+  opacity: 0.7;
+}

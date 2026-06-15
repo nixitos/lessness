@@ -1,8 +1,7 @@
-let ws, peerConn, dataChan;
-let curGroupId = '', myNick = '';
+let ws;
+let curGroupId = '', myNick = '', myUserId = '';
 let peers = new Map();
 
-// random objects for falling animation
 const objects = ['●', '◆', '■', '▲', '♥', '♦', '♣', '♠', '✧', '☆', '◈', '◉', '◍', '◎', '◘'];
 
 function getRandomObject() {
@@ -94,93 +93,66 @@ function updateGroupDisplay() {
   if (groupElem) groupElem.innerText = curGroupId;
 }
 
-function addPeerToList(peerId) {
+function updatePeerList() {
   let container = document.getElementById('peers-container');
   if (!container) return;
   
-  let existing = Array.from(container.children).find(el => el.dataset.peer === peerId);
-  if (!existing) {
+  container.innerHTML = '';
+  for (let [id, nick] of peers) {
     let div = document.createElement('div');
     div.className = 'peer-item';
-    div.dataset.peer = peerId;
+    div.dataset.peer = id;
     let avatarSpan = document.createElement('span');
     avatarSpan.className = 'peer-avatar';
-    avatarSpan.innerText = '?';
+    avatarSpan.innerText = getFirstLetter(nick);
     let nameSpan = document.createElement('span');
-    nameSpan.innerText = peerId.slice(0, 12);
+    nameSpan.innerText = nick;
     div.appendChild(avatarSpan);
     div.appendChild(nameSpan);
     container.appendChild(div);
   }
 }
 
-function createPeerConnection(targetId) {
-  let pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
-  pc.onicecandidate = (ev) => {
-    if (ev.candidate) {
-      ws.send(JSON.stringify({ t: 'ice', targetId, candidate: ev.candidate }));
-    }
-  };
-  pc.ondatachannel = (ev) => {
-    let chan = ev.channel;
-    chan.onmessage = (e) => addMsgToChat(JSON.parse(e.data));
-  };
-  let chan = pc.createDataChannel('chat');
-  chan.onopen = () => console.log('dc open');
-  chan.onmessage = (e) => addMsgToChat(JSON.parse(e.data));
-  dataChan = chan;
-  return pc;
+function addPeer(id, nick) {
+  if (id !== myUserId && !peers.has(id)) {
+    peers.set(id, nick);
+    updatePeerList();
+  }
 }
 
-async function startSignaling() {
-  ws = new WebSocket('wss://your-backend.onrender.com');
-  ws.onopen = () => {
-    ws.send(JSON.stringify({ t: 'join', gid: curGroupId }));
-  };
-  ws.onmessage = async (ev) => {
-    let msg = JSON.parse(ev.data);
-    if (msg.t === 'peers') {
-      for (let p of msg.list) {
-        addPeerToList(p.id);
-        let pc = createPeerConnection(p.id);
-        let offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        ws.send(JSON.stringify({ t: 'offer', targetId: p.id, offer }));
-      }
-    }
-    else if (msg.t === 'offer') {
-      addPeerToList(msg.from);
-      let pc = createPeerConnection(msg.from);
-      await pc.setRemoteDescription(new RTCSessionDescription(msg.offer));
-      let ans = await pc.createAnswer();
-      await pc.setLocalDescription(ans);
-      ws.send(JSON.stringify({ t: 'answer', targetId: msg.from, answer: ans }));
-    }
-    else if (msg.t === 'answer') {
-      let pc = peers.get(msg.from);
-      if(pc) await pc.setRemoteDescription(new RTCSessionDescription(msg.answer));
-    }
-    else if (msg.t === 'ice') {
-      let pc = peers.get(msg.from);
-      if(pc) await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
-    }
-  };
+function removePeer(id) {
+  if (peers.has(id)) {
+    peers.delete(id);
+    updatePeerList();
+  }
 }
 
-function sendMsg(text) {
-  if (!dataChan || dataChan.readyState !== 'open') return alert('нет соединения');
-  let packet = { nick: myNick, text, time: Date.now() };
-  dataChan.send(JSON.stringify(packet));
-  addMsgToChat(packet, true);
+function updatePeerNick(id, newNick) {
+  if (peers.has(id)) {
+    peers.set(id, newNick);
+    updatePeerList();
+  }
 }
 
-function addMsgToChat(msg, isSelf = false) {
+function addSystemMessage(text) {
+  let messagesDiv = document.getElementById('messages');
+  if (!messagesDiv) return;
+  
+  let div = document.createElement('div');
+  div.className = 'message system';
+  div.innerHTML = `<i>${escapeHtml(text)}</i>`;
+  messagesDiv.appendChild(div);
+  div.scrollIntoView();
+}
+
+function addMsgToChat(nick, text, isSelf = false) {
   let messagesDiv = document.getElementById('messages');
   if (!messagesDiv) return;
   
   let div = document.createElement('div');
   div.className = 'message' + (isSelf ? ' self' : '');
-  div.innerHTML = `<b>${escapeHtml(msg.nick)}</b><br>${escapeHtml(msg.text)}`;
+  let displayNick = isSelf ? 'вы' : escapeHtml(nick);
+  div.innerHTML = `<b>${displayNick}</b><br>${escapeHtml(text)}`;
   messagesDiv.appendChild(div);
   div.scrollIntoView();
 }
@@ -193,6 +165,87 @@ function escapeHtml(str) {
     if (m === '>') return '&gt;';
     return m;
   });
+}
+
+function connectWebSocket() {
+  ws = new WebSocket('wss://lessness-backend.onrender.com');
+  
+  ws.onopen = () => {
+    ws.send(JSON.stringify({
+      t: 'join',
+      gid: curGroupId,
+      nick: myNick
+    }));
+  };
+  
+  ws.onmessage = (ev) => {
+    let msg = JSON.parse(ev.data);
+    
+    if (msg.t === 'joined') {
+      myUserId = msg.userId;
+      myNick = msg.nick;
+      document.getElementById('current-nick').innerText = myNick;
+      updateAvatarDisplay();
+    }
+    else if (msg.t === 'peers') {
+      peers.clear();
+      for (let p of msg.list) {
+        peers.set(p.id, p.nick);
+      }
+      updatePeerList();
+    }
+    else if (msg.t === 'peer_joined') {
+      addPeer(msg.id, msg.nick);
+    }
+    else if (msg.t === 'peer_left') {
+      removePeer(msg.id);
+    }
+    else if (msg.t === 'peer_nick') {
+      updatePeerNick(msg.id, msg.nick);
+    }
+    else if (msg.t === 'msg') {
+      let isSelf = (msg.nick === myNick);
+      addMsgToChat(msg.nick, msg.text, isSelf);
+    }
+    else if (msg.t === 'system') {
+      addSystemMessage(msg.text);
+    }
+  };
+  
+  ws.onclose = () => {
+    addSystemMessage('соединение потеряно, переподключение...');
+    setTimeout(connectWebSocket, 3000);
+  };
+  
+  ws.onerror = () => {
+    addSystemMessage('ошибка соединения');
+  };
+}
+
+function sendMsg(text) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    addSystemMessage('нет соединения с сервером');
+    return false;
+  }
+  
+  ws.send(JSON.stringify({
+    t: 'msg',
+    text: text
+  }));
+  return true;
+}
+
+function changeNick(newNick) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    addSystemMessage('не удалось сменить ник, нет соединения');
+    return false;
+  }
+  
+  ws.send(JSON.stringify({
+    t: 'nick',
+    nick: newNick
+  }));
+  return true;
 }
 
 let actionBtn = document.getElementById('action-btn');
@@ -264,15 +317,12 @@ if (actionBtn && groupInput) {
       myNick = rawNick || loadNick();
       saveNick(myNick);
       curGroupId = gid;
-      let nickSpan = document.getElementById('current-nick');
-      if (nickSpan) nickSpan.innerText = myNick;
-      updateAvatarDisplay();
       updateGroupDisplay();
       let loginView = document.getElementById('login-view');
       let chatView = document.getElementById('chat-view');
       if (loginView) loginView.classList.remove('active');
       if (chatView) chatView.classList.add('active');
-      startSignaling();
+      connectWebSocket();
     };
   }
 }
@@ -307,11 +357,13 @@ if (editNickBtn) {
     if(newNick && newNick.trim()) { 
       let trimmed = newNick.trim();
       if (trimmed.length > 20) trimmed = trimmed.substring(0, 20);
-      myNick = trimmed; 
-      saveNick(myNick); 
-      let nickSpan = document.getElementById('current-nick');
-      if (nickSpan) nickSpan.innerText = myNick; 
-      updateAvatarDisplay();
+      if (trimmed !== myNick) {
+        myNick = trimmed;
+        saveNick(myNick);
+        document.getElementById('current-nick').innerText = myNick;
+        updateAvatarDisplay();
+        changeNick(myNick);
+      }
     }
   };
 }
