@@ -1,4 +1,5 @@
 const http = require('http');
+const https = require('https');
 const ws = require('ws');
 
 const PORT = process.env.PORT || 10000;
@@ -22,7 +23,8 @@ function startSelfPing() {
   console.log(`self-ping target: ${url}`);
   
   setInterval(() => {
-    const req = http.request(`${url}/ping`, (res) => {
+    const protocol = url.startsWith('https') ? https : http;
+    const req = protocol.request(`${url}/ping`, (res) => {
       console.log(`[${new Date().toISOString()}] self-ping: ${res.statusCode}`);
       res.resume();
     });
