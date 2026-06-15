@@ -1,32 +1,35 @@
-const ws = require('ws');
-const express = require('express');
 const http = require('http');
+const ws = require('ws');
 
-const app = express();
 const PORT = process.env.PORT || 10000;
 
-app.get('/ping', (req, res) => {
-  res.status(200).send('pong');
+const server = http.createServer((req, res) => {
+  if (req.url === '/ping') {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('pong');
+  } else {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('lessness backend running');
+  }
 });
 
-app.get('/', (req, res) => {
-  res.status(200).send('lessness backend running');
-});
-
-const server = http.createServer(app);
 const wss = new ws.Server({ server });
 
 let groups = new Map();
 
-// ping-self механизм
 function startSelfPing() {
   const url = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
   console.log(`self-ping target: ${url}`);
   
   setInterval(() => {
-    fetch(`${url}/ping`)
-      .then(res => console.log(`[${new Date().toISOString()}] self-ping: ${res.status}`))
-      .catch(err => console.log(`[${new Date().toISOString()}] ping failed: ${err.message}`));
+    const req = http.request(`${url}/ping`, (res) => {
+      console.log(`[${new Date().toISOString()}] self-ping: ${res.statusCode}`);
+      res.resume();
+    });
+    req.on('error', (err) => {
+      console.log(`[${new Date().toISOString()}] ping failed: ${err.message}`);
+    });
+    req.end();
   }, 120000);
 }
 
